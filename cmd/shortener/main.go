@@ -75,7 +75,7 @@ func (s *store) shortenHandler() http.HandlerFunc {
 
 		res.Header().Set("Content-Type", "text/plain")
 		res.WriteHeader(http.StatusCreated)
-		if _, err := io.WriteString(res, req.Host+"/"+token); err != nil {
+		if _, err := io.WriteString(res, "http://"+req.Host+"/"+token); err != nil {
 			http.Error(res, "Internal error", http.StatusBadRequest)
 			return
 		}
@@ -104,11 +104,8 @@ func (s *store) redirectHandler() http.HandlerFunc {
 		}
 
 		res.Header().Set("Content-Type", "text/plain")
+		res.Header().Set("Location", originalURL)
 		res.WriteHeader(http.StatusTemporaryRedirect)
-		if _, err := io.WriteString(res, originalURL); err != nil {
-			http.Error(res, "Internal error", http.StatusBadRequest)
-			return
-		}
 	}
 }
 
@@ -118,7 +115,7 @@ func run() error {
 	mux.HandleFunc("/", s.shortenHandler())
 	mux.HandleFunc("/{id}", s.redirectHandler())
 
-	err := http.ListenAndServe("localhost:8080", mux)
+	err := http.ListenAndServe("localhost:8081", mux)
 	return err
 
 }
