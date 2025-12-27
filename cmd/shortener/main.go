@@ -115,7 +115,7 @@ func run() error {
 	mux.HandleFunc("/", s.shortenHandler())
 	mux.HandleFunc("/{id}", s.redirectHandler())
 
-	err := http.ListenAndServe("localhost:8081", mux)
+	err := http.ListenAndServe("localhost:8080", mux)
 	return err
 
 }
