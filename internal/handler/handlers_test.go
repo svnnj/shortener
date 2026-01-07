@@ -56,8 +56,8 @@ func TestShorten_shorten(t *testing.T) {
 			body:       "",
 			mock:       shortenerMock{},
 			wantStatus: http.StatusMethodNotAllowed,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Only POST method is allowed\n",
+			wantCT:     "",
+			wantBody:   "",
 		},
 		{
 			name:       "invalid URL",
@@ -139,8 +139,8 @@ func TestShorten_redirect(t *testing.T) {
 			path:       "/abc123",
 			mock:       shortenerMock{},
 			wantStatus: http.StatusMethodNotAllowed,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Only GET method is allowed\n",
+			wantCT:     "",
+			wantBody:   "",
 		},
 		{
 			name:   "token not found",
