@@ -1,13 +1,21 @@
 package config
 
+import (
+	"flag"
+)
+
 type Config struct {
-	Host     string
-	Protocol string
+	Host          string
+	ShortenedHost string
 }
 
 func Get() Config {
+	host := flag.String("a", "localhost:8080", "main server host")
+	shortenedHost := flag.String("b", "http://localhost:8080", "shortened URL server host")
+	flag.Parse()
+
 	return Config{
-		Host:     "localhost:8080",
-		Protocol: "http",
+		Host:          *host,
+		ShortenedHost: *shortenedHost,
 	}
 }

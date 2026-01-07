@@ -50,7 +50,7 @@ func (sh *Shortener) Shorten(originalURL string) (string, error) {
 	}
 
 	sh.kvStorage.Set(token, originalURL)
-	shortURL := fmt.Sprintf("%s://%s/%s", sh.cfg.Protocol, sh.cfg.Host, token)
+	shortURL := fmt.Sprintf("%s/%s", sh.cfg.ShortenedHost, token)
 
 	return shortURL, nil
 }
