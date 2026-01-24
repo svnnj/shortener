@@ -1,0 +1,177 @@
+package handler
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/svnnj/shortener/internal/service"
+)
+
+type shortenerMock struct {
+	shortenRet string
+	shortenErr error
+
+	expandRet string
+	expandErr error
+}
+
+func (s *shortenerMock) Shorten(originalURL string) (string, error) {
+	return s.shortenRet, s.shortenErr
+}
+
+func (s *shortenerMock) Expand(token string) (string, error) {
+	return s.expandRet, s.expandErr
+}
+
+func TestShorten_shorten(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string // raw request body
+		mock       shortenerMock
+		wantStatus int
+		wantCT     string
+		wantBody   string
+	}{
+		{
+			name:   "successful POST",
+			method: http.MethodPost,
+			body:   "https://example.com/foo",
+			mock: shortenerMock{
+				shortenRet: "http://test.test/abc123",
+			},
+			wantStatus: http.StatusCreated,
+			wantCT:     "text/plain",
+			wantBody:   "http://test.test/abc123",
+		},
+		{
+			name:       "reject non‑POST",
+			method:     http.MethodGet,
+			body:       "",
+			mock:       shortenerMock{},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCT:     "",
+			wantBody:   "",
+		},
+		{
+			name:       "invalid URL",
+			method:     http.MethodPost,
+			body:       "not-a-url",
+			mock:       shortenerMock{},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Incorrect URL\n",
+		},
+		{
+			name:   "service error",
+			method: http.MethodPost,
+			body:   "https://example.com",
+			mock: shortenerMock{
+				shortenErr: errors.New("boom"),
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Internal error\n",
+		},
+		{
+			name:       "exceeds the limit",
+			method:     http.MethodPost,
+			body:       func() string { return "https://example.com/foo" + strings.Repeat("a", 2*1024) }(),
+			mock:       shortenerMock{},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Invalid request body\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewRouter(&tt.mock)
+
+			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			res := rr.Result()
+			defer res.Body.Close()
+			b, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
+			assert.Equal(t, tt.wantBody, string(b))
+		})
+	}
+}
+
+func TestShorten_redirect(t *testing.T) {
+	tests := []struct {
+		name         string
+		method       string
+		path         string
+		mock         shortenerMock
+		wantStatus   int
+		wantCT       string
+		wantLocation string
+		wantBody     string
+	}{
+		{
+			name:   "succesful GET",
+			method: http.MethodGet,
+			path:   "/abc123",
+			mock: shortenerMock{
+				expandRet: "https://example.com/original",
+			},
+			wantStatus:   http.StatusTemporaryRedirect,
+			wantCT:       "text/plain",
+			wantLocation: "https://example.com/original",
+			wantBody:     "",
+		},
+		{
+			name:       "reject non‑GET",
+			method:     http.MethodPost,
+			path:       "/abc123",
+			mock:       shortenerMock{},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCT:     "",
+			wantBody:   "",
+		},
+		{
+			name:   "token not found",
+			method: http.MethodGet,
+			path:   "/missing",
+			mock: shortenerMock{
+				expandErr: service.ErrTokenNotFound,
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "No such URL\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewRouter(&tt.mock)
+
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			res := rr.Result()
+			defer res.Body.Close()
+			b, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
+			assert.Equal(t, tt.wantLocation, res.Header.Get("Location"))
+			assert.Equal(t, tt.wantBody, string(b))
+		})
+	}
+}
