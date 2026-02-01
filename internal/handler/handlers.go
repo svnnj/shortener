@@ -51,14 +51,14 @@ func (h *handlers) shorten(res http.ResponseWriter, req *http.Request) {
 
 	shortURL, err := h.shortener.Shorten(originalURL.String())
 	if err != nil {
-		http.Error(res, "Internal error", http.StatusBadRequest)
+		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	res.Header().Set("Content-Type", "text/plain")
 	res.WriteHeader(http.StatusCreated)
 	if _, err := io.WriteString(res, shortURL); err != nil {
-		http.Error(res, "Internal error", http.StatusBadRequest)
+		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
 }
@@ -67,14 +67,14 @@ func (h *handlers) redirect(res http.ResponseWriter, req *http.Request) {
 
 	defer req.Body.Close()
 	if _, err := io.Copy(io.Discard, io.LimitReader(req.Body, 1024)); err != nil {
-		http.Error(res, "Internal error", http.StatusBadRequest)
+		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	id := chi.URLParam(req, "id")
 	originalURL, err := h.shortener.Expand(id)
 	if errors.Is(err, service.ErrTokenNotFound) {
-		http.Error(res, "No such URL", http.StatusBadRequest)
+		http.Error(res, "No such URL", http.StatusNotFound)
 		return
 	}
 
