@@ -18,7 +18,7 @@ func run() error {
 	shortener := service.NewShortener(kvStorage, tokenGen, cfg)
 	handler := handler.NewRouter(shortener)
 
-	return http.ListenAndServe(cfg.Host, handler)
+	return http.ListenAndServe(cfg.ServerAddress, handler)
 }
 
 func main() {

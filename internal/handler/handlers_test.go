@@ -75,7 +75,7 @@ func TestShorten_shorten(t *testing.T) {
 			mock: shortenerMock{
 				shortenErr: errors.New("boom"),
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusInternalServerError,
 			wantCT:     "text/plain; charset=utf-8",
 			wantBody:   "Internal error\n",
 		},
@@ -149,7 +149,7 @@ func TestShorten_redirect(t *testing.T) {
 			mock: shortenerMock{
 				expandErr: service.ErrTokenNotFound,
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusNotFound,
 			wantCT:     "text/plain; charset=utf-8",
 			wantBody:   "No such URL\n",
 		},
