@@ -3,11 +3,12 @@ package handler
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/svnnj/shortener/internal/service"
 )
 
@@ -25,7 +26,7 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	h := newHandlers(shortener)
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(withLogging)
 
 	r.Post("/", h.shorten)
 	r.Get("/{id}", h.redirect)
@@ -81,4 +82,54 @@ func (h *handlers) redirect(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "text/plain")
 	res.Header().Set("Location", originalURL)
 	res.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+type (
+	responseData struct {
+		status int
+		size   int
+	}
+
+	loggingResponseWriter struct {
+		http.ResponseWriter
+		responseData *responseData
+	}
+)
+
+func (r loggingResponseWriter) Write(b []byte) (int, error) {
+	size, err := r.ResponseWriter.Write(b)
+	r.responseData.size += size
+	return size, err
+}
+
+func (r loggingResponseWriter) WriteHeader(statusCode int) {
+	r.ResponseWriter.WriteHeader(statusCode)
+	r.responseData.status = statusCode
+}
+
+func withLogging(h http.Handler) http.Handler {
+	logFn := func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		lw := loggingResponseWriter{
+			w,
+			&responseData{
+				status: 0,
+				size:   0,
+			},
+		}
+
+		h.ServeHTTP(lw, r)
+
+		duration := time.Since(start)
+
+		slog.Info("REQ",
+			"uri", r.RequestURI,
+			"method", r.Method,
+			"status", lw.responseData.status,
+			"duration", duration,
+			"size", lw.responseData.size,
+		)
+	}
+	return http.HandlerFunc(logFn)
 }
