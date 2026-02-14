@@ -175,7 +175,7 @@ func TestShorten_shortenJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := NewRouter(&tt.mock)
 
-			req := httptest.NewRequest(tt.method, "/shorten", strings.NewReader(tt.body))
+			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Add("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 			router.ServeHTTP(rr, req)

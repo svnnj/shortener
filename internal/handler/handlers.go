@@ -32,10 +32,7 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r.Use(middleware.Recoverer)
 
 	r.Post("/", h.shorten)
-	r.Post("/shorten", h.shortenJSON)
-	r.Get("/shorten", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	})
+	r.Post("/api/shorten", h.shortenJSON)
 	r.Get("/{id}", h.redirect)
 
 	return r
