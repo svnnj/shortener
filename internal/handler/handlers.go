@@ -37,7 +37,7 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 }
 
 type shortenJSONReq struct {
-	Url string `json:"url"`
+	URL string `json:"url"`
 }
 
 type shortenJSONRes struct {
@@ -58,14 +58,14 @@ func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	parsedURL, err := url.Parse(reqData.Url)
+	parsedURL, err := url.Parse(reqData.URL)
 	if err != nil || parsedURL.Host == "" {
 		http.Error(res, "Incorrect URL", http.StatusBadRequest)
 		return
 	}
 
 	var resData shortenJSONRes
-	shortURL, err := h.shortener.Shorten(reqData.Url)
+	shortURL, err := h.shortener.Shorten(reqData.URL)
 	if err != nil {
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
