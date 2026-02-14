@@ -132,6 +132,15 @@ func TestShorten_shortenJSON(t *testing.T) {
 			wantBody:   `{"result":"http://test.test/abc123"}`,
 		},
 		{
+			name:       "reject non‑POST",
+			method:     http.MethodGet,
+			body:       "",
+			mock:       shortenerMock{},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCT:     "",
+			wantBody:   "",
+		},
+		{
 			name:       "invalid URL",
 			method:     http.MethodPost,
 			body:       `{"url":"not-a-url"}`,

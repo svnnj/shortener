@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
 	"github.com/svnnj/shortener/internal/service"
 )
 
@@ -28,9 +29,13 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(withLogging)
+	r.Use(middleware.Recoverer)
 
 	r.Post("/", h.shorten)
 	r.Post("/shorten", h.shortenJSON)
+	r.Get("/shorten", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
 	r.Get("/{id}", h.redirect)
 
 	return r
