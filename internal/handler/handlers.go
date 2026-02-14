@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -29,9 +30,60 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r.Use(withLogging)
 
 	r.Post("/", h.shorten)
+	r.Post("/shorten", h.shortenJSON)
 	r.Get("/{id}", h.redirect)
 
 	return r
+}
+
+type shortenJSONReq struct {
+	Url string `json:"url"`
+}
+
+type shortenJSONRes struct {
+	Result string `json:"result"`
+}
+
+func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+	maxBytes := int64(1024)
+	body, err := io.ReadAll(http.MaxBytesReader(res, req.Body, maxBytes))
+	if err != nil {
+		http.Error(res, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var reqData shortenJSONReq
+	if err := json.Unmarshal([]byte(body), &reqData); err != nil {
+		http.Error(res, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	parsedURL, err := url.Parse(reqData.Url)
+	if err != nil || parsedURL.Host == "" {
+		http.Error(res, "Incorrect URL", http.StatusBadRequest)
+		return
+	}
+
+	var resData shortenJSONRes
+	shortURL, err := h.shortener.Shorten(reqData.Url)
+	if err != nil {
+		http.Error(res, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	resData.Result = shortURL
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusCreated)
+	resJSON, err := json.Marshal(resData)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if _, err := res.Write(resJSON); err != nil {
+		http.Error(res, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *handlers) shorten(res http.ResponseWriter, req *http.Request) {
