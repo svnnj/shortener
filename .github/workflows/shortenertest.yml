@@ -312,7 +312,7 @@ jobs:
           shortenertest -test.v -test.run=^TestIteration9$ \
               -binary-path=cmd/shortener/shortener \
               -source-path=. \
-              -file-store-path=$TEMP_FILE
+              -ffile-storage-path=$TEMP_FILE
 
       - name: "Code increment #10"
         if: |
