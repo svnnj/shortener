@@ -20,7 +20,7 @@ func Get() Config {
 
 	serverAddressFlag := flag.String("a", "localhost:8080", "main server host")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "shortened URL server host")
-	fileStoragePathFlag := flag.String("file-Store-path", "./kv.txt", "storage path")
+	fileStoragePathFlag := flag.String("f", "./kv.txt", "storage path")
 	flag.Parse()
 
 	if cfg.ServerAddress == "" {
