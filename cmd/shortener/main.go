@@ -14,7 +14,10 @@ import (
 func run() error {
 	cfg := config.Get()
 
-	kvStorage := repository.NewKVStorage()
+	kvStorage, err := repository.NewKVRepository(cfg.FileStoragePath)
+	if err != nil {
+		slog.Error(err.Error())
+	}
 	tokenGen := service.NewB64TokenGen(9)
 	shortener := service.NewShortener(kvStorage, tokenGen, cfg)
 	handler := handler.NewRouter(shortener)

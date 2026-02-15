@@ -6,8 +6,9 @@ import (
 )
 
 type Config struct {
-	ServerAddress string
-	BaseURL       string
+	ServerAddress   string
+	BaseURL         string
+	FileStoragePath string
 }
 
 func Get() Config {
@@ -15,9 +16,11 @@ func Get() Config {
 
 	cfg.ServerAddress = os.Getenv("SERVER_ADDRESS")
 	cfg.BaseURL = os.Getenv("BASE_URL")
+	cfg.FileStoragePath = os.Getenv("FILE_STORAGE_PATH")
 
 	serverAddressFlag := flag.String("a", "localhost:8080", "main server host")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "shortened URL server host")
+	fileStoragePathFlag := flag.String("f", "./kv.txt", "storage path")
 	flag.Parse()
 
 	if cfg.ServerAddress == "" {
@@ -25,6 +28,9 @@ func Get() Config {
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = *baseURLFlag
+	}
+	if cfg.FileStoragePath == "" {
+		cfg.FileStoragePath = *fileStoragePathFlag
 	}
 
 	return cfg
