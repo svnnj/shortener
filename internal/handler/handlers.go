@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -29,6 +31,8 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(withLogging)
+	r.Use(withDecopmression)
+	r.Use(withGzip)
 	r.Use(middleware.Recoverer)
 
 	r.Post("/", h.shorten)
@@ -57,7 +61,7 @@ func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
 
 	var reqData shortenJSONReq
 	if err := json.Unmarshal([]byte(body), &reqData); err != nil {
-		http.Error(res, "Invalid request body", http.StatusBadRequest)
+		http.Error(res, "Error parsing JSON", http.StatusBadRequest)
 		return
 	}
 	parsedURL, err := url.Parse(reqData.URL)
@@ -186,4 +190,71 @@ func withLogging(h http.Handler) http.Handler {
 		)
 	}
 	return http.HandlerFunc(logFn)
+}
+
+func withDecopmression(next http.Handler) http.Handler {
+	compFn := func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
+			slog.Info("not gzipped request")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		slog.Info("gzipped request")
+
+		defer r.Body.Close()
+		gzr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			io.WriteString(w, err.Error())
+			return
+		}
+		r.Body = gzr
+
+		next.ServeHTTP(w, r)
+	}
+
+	return http.HandlerFunc(compFn)
+}
+
+type gzipWriter struct {
+	http.ResponseWriter
+	Writer io.Writer
+}
+
+func (w gzipWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+func withGzip(next http.Handler) http.Handler {
+	compFn := func(w http.ResponseWriter, r *http.Request) {
+		isToBeCompressed := false
+		for _, s := range r.Header.Values("Accept-Encoding") {
+			if strings.Contains(s, "gzip") {
+				isToBeCompressed = true
+				break
+			}
+		}
+		if strings.Contains(w.Header().Get("Content-Type"), "application/json") && strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
+			isToBeCompressed = false
+			slog.Info("gzipped response")
+		}
+		if !isToBeCompressed {
+			slog.Info("not gzipped response")
+			next.ServeHTTP(w, r)
+			return
+		}
+		slog.Info("gzipped response")
+
+		gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		if err != nil {
+			io.WriteString(w, err.Error())
+			return
+		}
+		defer gz.Close()
+
+		w.Header().Set("Content-Encoding", "gzip")
+		next.ServeHTTP(gzipWriter{ResponseWriter: w, Writer: gz}, r)
+	}
+
+	return http.HandlerFunc(compFn)
 }
