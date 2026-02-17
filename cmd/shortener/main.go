@@ -16,8 +16,9 @@ func run() error {
 
 	kvStorage, err := repository.NewKVRepository(cfg.FileStoragePath)
 	if err != nil {
-		slog.Error(err.Error())
+		return err
 	}
+	defer kvStorage.Close()
 	tokenGen := service.NewB64TokenGen(9)
 	shortener := service.NewShortener(kvStorage, tokenGen, cfg)
 	handler := handler.NewRouter(shortener)

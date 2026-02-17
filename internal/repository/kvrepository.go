@@ -18,7 +18,7 @@ func NewKVRepository(path string) (*KVRepository, error) {
 	}
 	persisted, err := loader.Load()
 	if err != nil {
-		slog.Error(fmt.Sprintf("oad persisted data: %s", err.Error()))
+		slog.Error(fmt.Sprintf("load persisted data: %s", err.Error()))
 		return nil, err
 	}
 

@@ -31,7 +31,7 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(withLogging)
-	r.Use(withDecopmression)
+	r.Use(withDecompression)
 	r.Use(withGzip)
 	r.Use(middleware.Recoverer)
 
@@ -192,7 +192,7 @@ func withLogging(h http.Handler) http.Handler {
 	return http.HandlerFunc(logFn)
 }
 
-func withDecopmression(next http.Handler) http.Handler {
+func withDecompression(next http.Handler) http.Handler {
 	compFn := func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
 			slog.Info("not gzipped request")
