@@ -75,7 +75,7 @@ func TestShorten_shorten(t *testing.T) {
 			mock: shortenerMock{
 				shortenErr: errors.New("boom"),
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusInternalServerError,
 			wantCT:     "text/plain; charset=utf-8",
 			wantBody:   "Internal error\n",
 		},
@@ -95,6 +95,88 @@ func TestShorten_shorten(t *testing.T) {
 			router := NewRouter(&tt.mock)
 
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			res := rr.Result()
+			defer res.Body.Close()
+			b, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
+			assert.Equal(t, tt.wantBody, string(b))
+		})
+	}
+}
+
+func TestShorten_shortenJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string // raw request body
+		mock       shortenerMock
+		wantStatus int
+		wantCT     string
+		wantBody   string
+	}{
+		{
+			name:   "successful POST",
+			method: http.MethodPost,
+			body:   `{"url":"https://example.com/foo"}`,
+			mock: shortenerMock{
+				shortenRet: "http://test.test/abc123",
+			},
+			wantStatus: http.StatusCreated,
+			wantCT:     "application/json",
+			wantBody:   `{"result":"http://test.test/abc123"}`,
+		},
+		{
+			name:       "reject non‑POST",
+			method:     http.MethodGet,
+			body:       "",
+			mock:       shortenerMock{},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCT:     "",
+			wantBody:   "",
+		},
+		{
+			name:       "invalid URL",
+			method:     http.MethodPost,
+			body:       `{"url":"not-a-url"}`,
+			mock:       shortenerMock{},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Incorrect URL\n",
+		},
+		{
+			name:   "service error",
+			method: http.MethodPost,
+			body:   `{"url":"https://example.com"}`,
+			mock: shortenerMock{
+				shortenErr: errors.New("boom"),
+			},
+			wantStatus: http.StatusInternalServerError,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Internal error\n",
+		},
+		{
+			name:       "exceeds the limit",
+			method:     http.MethodPost,
+			body:       func() string { return `"url":"https://example.com/foo"` + strings.Repeat("a", 2*1024) }(),
+			mock:       shortenerMock{},
+			wantStatus: http.StatusBadRequest,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Invalid request body\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewRouter(&tt.mock)
+
+			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
+			req.Header.Add("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 			router.ServeHTTP(rr, req)
 
@@ -149,7 +231,7 @@ func TestShorten_redirect(t *testing.T) {
 			mock: shortenerMock{
 				expandErr: service.ErrTokenNotFound,
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusNotFound,
 			wantCT:     "text/plain; charset=utf-8",
 			wantBody:   "No such URL\n",
 		},

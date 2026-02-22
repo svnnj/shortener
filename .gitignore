@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+kv.txt
 
 # Test binary, built with `go test -c`
 *.test

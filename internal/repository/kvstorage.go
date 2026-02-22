@@ -15,6 +15,7 @@ type KVStorage struct {
 }
 
 func NewKVStorage() *KVStorage {
+
 	return &KVStorage{
 		mu:   sync.RWMutex{},
 		data: map[string]string{},
