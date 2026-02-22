@@ -17,17 +17,19 @@ import (
 )
 
 type handlers struct {
-	shortener service.ShortenerService
+	shortener     service.ShortenerService
+	healthChecker service.HealthCheckerService
 }
 
-func newHandlers(shortener service.ShortenerService) *handlers {
+func newHandlers(shortener service.ShortenerService, healthChecker service.HealthCheckerService) *handlers {
 	return &handlers{
-		shortener: shortener,
+		shortener:     shortener,
+		healthChecker: healthChecker,
 	}
 }
 
-func NewRouter(shortener service.ShortenerService) http.Handler {
-	h := newHandlers(shortener)
+func NewRouter(shortener service.ShortenerService, healthChecker service.HealthCheckerService) http.Handler {
+	h := newHandlers(shortener, healthChecker)
 	r := chi.NewRouter()
 
 	r.Use(withLogging)
@@ -38,6 +40,7 @@ func NewRouter(shortener service.ShortenerService) http.Handler {
 	r.Post("/", h.shorten)
 	r.Post("/api/shorten", h.shortenJSON)
 	r.Get("/{id}", h.redirect)
+	r.Get("/ping", h.ping)
 
 	return r
 }
@@ -140,6 +143,24 @@ func (h *handlers) redirect(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "text/plain")
 	res.Header().Set("Location", originalURL)
 	res.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+func (h *handlers) ping(res http.ResponseWriter, req *http.Request) {
+
+	defer req.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(req.Body, 1024)); err != nil {
+		http.Error(res, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err := h.healthChecker.PingDB(req.Context())
+	if err != nil {
+		http.Error(res, "Database is not available", http.StatusInternalServerError)
+		return
+	}
+
+	res.Header().Set("Content-Type", "text/plain")
+	res.WriteHeader(http.StatusOK)
 }
 
 type (
