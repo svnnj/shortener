@@ -14,10 +14,10 @@ import (
 func runMigrations(dsn string) error {
 	slog.Info("running migration...")
 	m, err := migrate.New("file://migrations", dsn)
-	defer m.Close()
 	if err != nil {
 		return fmt.Errorf("creating migrate instance: %w", err)
 	}
+	defer m.Close()
 
 	if err = m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("running migrations: %w", err)
