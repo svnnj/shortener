@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,19 @@ import (
 	"github.com/svnnj/shortener/internal/service"
 )
 
+type testTable []struct {
+	name            string
+	method          string
+	path            string
+	mock            shortenerMock
+	body            string
+	healthCheckMock healthCheckMock
+	wantStatus      int
+	wantCT          string
+	wantLocation    string
+	wantBody        string
+}
+
 type shortenerMock struct {
 	shortenRet string
 	shortenErr error
@@ -21,24 +35,72 @@ type shortenerMock struct {
 	expandErr error
 }
 
-func (s *shortenerMock) Shorten(originalURL string) (string, error) {
+type healthCheckMock struct {
+	pingErr error
+}
+
+func (s *shortenerMock) Shorten(ctx context.Context, originalURL string) (string, error) {
 	return s.shortenRet, s.shortenErr
 }
 
-func (s *shortenerMock) Expand(token string) (string, error) {
+func (s *shortenerMock) Expand(ctx context.Context, token string) (string, error) {
 	return s.expandRet, s.expandErr
 }
 
+func (hc *healthCheckMock) PingDB(ctx context.Context) error {
+	return hc.pingErr
+}
+
+func TestHealthChecker_ping(t *testing.T) {
+	tests := testTable{
+		{
+			name:            "successful GET",
+			method:          http.MethodGet,
+			healthCheckMock: healthCheckMock{},
+			wantStatus:      http.StatusOK,
+			wantCT:          "text/plain",
+		},
+		{
+			name:            "reject non‑GET",
+			method:          http.MethodPost,
+			body:            "",
+			healthCheckMock: healthCheckMock{},
+			wantStatus:      http.StatusMethodNotAllowed,
+		},
+		{
+			name:   "service error",
+			method: http.MethodGet,
+			healthCheckMock: healthCheckMock{
+				pingErr: errors.New("boom"),
+			},
+			wantStatus: http.StatusInternalServerError,
+			wantCT:     "text/plain; charset=utf-8",
+			wantBody:   "Database is not available\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewRouter(&tt.mock, &tt.healthCheckMock)
+
+			req := httptest.NewRequest(tt.method, "/ping", strings.NewReader(tt.body))
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			res := rr.Result()
+			defer res.Body.Close()
+			b, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
+			assert.Equal(t, tt.wantBody, string(b))
+		})
+	}
+}
+
 func TestShorten_shorten(t *testing.T) {
-	tests := []struct {
-		name       string
-		method     string
-		body       string // raw request body
-		mock       shortenerMock
-		wantStatus int
-		wantCT     string
-		wantBody   string
-	}{
+	tests := testTable{
 		{
 			name:   "successful POST",
 			method: http.MethodPost,
@@ -92,7 +154,7 @@ func TestShorten_shorten(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
+			router := NewRouter(&tt.mock, &tt.healthCheckMock)
 
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			rr := httptest.NewRecorder()
@@ -111,15 +173,7 @@ func TestShorten_shorten(t *testing.T) {
 }
 
 func TestShorten_shortenJSON(t *testing.T) {
-	tests := []struct {
-		name       string
-		method     string
-		body       string // raw request body
-		mock       shortenerMock
-		wantStatus int
-		wantCT     string
-		wantBody   string
-	}{
+	tests := testTable{
 		{
 			name:   "successful POST",
 			method: http.MethodPost,
@@ -173,7 +227,7 @@ func TestShorten_shortenJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
+			router := NewRouter(&tt.mock, &tt.healthCheckMock)
 
 			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Add("Content-Type", "application/json")
@@ -193,16 +247,7 @@ func TestShorten_shortenJSON(t *testing.T) {
 }
 
 func TestShorten_redirect(t *testing.T) {
-	tests := []struct {
-		name         string
-		method       string
-		path         string
-		mock         shortenerMock
-		wantStatus   int
-		wantCT       string
-		wantLocation string
-		wantBody     string
-	}{
+	tests := testTable{
 		{
 			name:   "succesful GET",
 			method: http.MethodGet,
@@ -239,7 +284,7 @@ func TestShorten_redirect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
+			router := NewRouter(&tt.mock, &tt.healthCheckMock)
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			rr := httptest.NewRecorder()

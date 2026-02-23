@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -9,17 +10,17 @@ import (
 )
 
 type ShortenerService interface {
-	Shorten(originalURL string) (string, error)
-	Expand(token string) (string, error)
+	Shorten(ctx context.Context, originalURL string) (string, error)
+	Expand(ctx context.Context, token string) (string, error)
 }
 
 type Shortener struct {
-	kvStorage repository.KVStorageRepository
+	kvStorage repository.KVStoreRepository
 	tokenGen  TokenService
 	cfg       config.Config
 }
 
-func NewShortener(kvStorage repository.KVStorageRepository, tokenGen TokenService, cfg config.Config) *Shortener {
+func NewShortener(kvStorage repository.KVStoreRepository, tokenGen TokenService, cfg config.Config) *Shortener {
 	return &Shortener{
 		kvStorage: kvStorage,
 		tokenGen:  tokenGen,
@@ -32,7 +33,7 @@ var (
 	ErrTokenNotFound  = errors.New("token not found")
 )
 
-func (sh *Shortener) Shorten(originalURL string) (string, error) {
+func (sh *Shortener) Shorten(ctx context.Context, originalURL string) (string, error) {
 	var (
 		token string
 		err   error
@@ -40,7 +41,7 @@ func (sh *Shortener) Shorten(originalURL string) (string, error) {
 
 	for i := 0; true; i++ {
 		token = sh.tokenGen.Generate()
-		if _, exists := sh.kvStorage.Get(token); !exists {
+		if _, err := sh.kvStorage.Get(ctx, token); err != nil {
 			break
 		}
 		if i >= 3 {
@@ -49,16 +50,16 @@ func (sh *Shortener) Shorten(originalURL string) (string, error) {
 		}
 	}
 
-	sh.kvStorage.Set(token, originalURL)
+	sh.kvStorage.Set(ctx, token, originalURL)
 	shortURL := fmt.Sprintf("%s/%s", sh.cfg.BaseURL, token)
 
 	return shortURL, nil
 }
 
-func (sh *Shortener) Expand(token string) (string, error) {
+func (sh *Shortener) Expand(ctx context.Context, token string) (string, error) {
 	var err error
-	originalURL, exists := sh.kvStorage.Get(token)
-	if !exists {
+	originalURL, err := sh.kvStorage.Get(ctx, token)
+	if err != nil {
 		err = ErrTokenNotFound
 	}
 	return originalURL, err
