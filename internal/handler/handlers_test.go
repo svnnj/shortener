@@ -39,11 +39,11 @@ type healthCheckMock struct {
 	pingErr error
 }
 
-func (s *shortenerMock) Shorten(originalURL string) (string, error) {
+func (s *shortenerMock) Shorten(ctx context.Context, originalURL string) (string, error) {
 	return s.shortenRet, s.shortenErr
 }
 
-func (s *shortenerMock) Expand(token string) (string, error) {
+func (s *shortenerMock) Expand(ctx context.Context, token string) (string, error) {
 	return s.expandRet, s.expandErr
 }
 

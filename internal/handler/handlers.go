@@ -74,7 +74,7 @@ func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
 	}
 
 	var resData shortenJSONRes
-	shortURL, err := h.shortener.Shorten(reqData.URL)
+	shortURL, err := h.shortener.Shorten(req.Context(), reqData.URL)
 	if err != nil {
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
@@ -111,7 +111,7 @@ func (h *handlers) shorten(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	shortURL, err := h.shortener.Shorten(originalURL.String())
+	shortURL, err := h.shortener.Shorten(req.Context(), originalURL.String())
 	if err != nil {
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
@@ -134,7 +134,7 @@ func (h *handlers) redirect(res http.ResponseWriter, req *http.Request) {
 	}
 
 	id := chi.URLParam(req, "id")
-	originalURL, err := h.shortener.Expand(id)
+	originalURL, err := h.shortener.Expand(req.Context(), id)
 	if errors.Is(err, service.ErrTokenNotFound) {
 		http.Error(res, "No such URL", http.StatusNotFound)
 		return

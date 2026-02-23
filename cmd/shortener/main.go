@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,19 +18,24 @@ import (
 func run(ctx context.Context) error {
 	cfg := config.Get()
 
-	kvStorage, err := repository.NewKVRepository(cfg.FileStoragePath)
-	if err != nil {
-		return fmt.Errorf("key value repository init: %w", err)
-	}
-	defer kvStorage.Close()
-	tokenGen := service.NewB64TokenGen(9)
-	shortener := service.NewShortener(kvStorage, tokenGen, cfg)
+	var sqlDB *sql.DB
+	var err error
 
-	sqlDB, err := db.NewPostgresDB(cfg.DatabaseDSN)
-	if err != nil {
-		return fmt.Errorf("db init: %w", err)
+	if cfg.DatabaseDSN != "" {
+		sqlDB, err = db.NewPostgresDB(cfg.DatabaseDSN)
+		if err != nil {
+			return fmt.Errorf("db init: %w", err)
+		}
+		defer sqlDB.Close()
 	}
-	defer sqlDB.Close()
+
+	urlStore, err := repository.NewKVStore(cfg, sqlDB)
+	if err != nil {
+		return fmt.Errorf("store init: %w", err)
+	}
+
+	tokenGen := service.NewB64TokenGen(9)
+	shortener := service.NewShortener(urlStore, tokenGen, cfg)
 
 	healthChecker := service.NewHealthChecker(sqlDB)
 	handler := handler.NewRouter(shortener, healthChecker)
@@ -43,7 +49,7 @@ var (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := context.TODO()
 	logger := slog.New(slog.NewTextHandler(
 		os.Stdout,
 		&slog.HandlerOptions{Level: slog.LevelDebug},
