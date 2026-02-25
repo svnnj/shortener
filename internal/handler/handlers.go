@@ -52,7 +52,7 @@ type batchReq struct {
 }
 
 type batchRes struct {
-	CorelationId string `json:"corelation_id"`
+	CorelationID string `json:"corelation_id"`
 	ShortURL     string `json:"short_url"`
 }
 
@@ -83,7 +83,7 @@ func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
 			http.Error(res, "Internal error", http.StatusInternalServerError)
 			return
 		}
-		resData = append(resData, batchRes{CorelationId: v.CorelationID, ShortURL: shortURL})
+		resData = append(resData, batchRes{CorelationID: v.CorelationID, ShortURL: shortURL})
 	}
 	if len(reqData) == 0 {
 		http.Error(res, "Empty array", http.StatusBadRequest)
