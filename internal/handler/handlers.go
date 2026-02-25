@@ -39,10 +39,65 @@ func NewRouter(shortener service.ShortenerService, healthChecker service.HealthC
 
 	r.Post("/", h.shorten)
 	r.Post("/api/shorten", h.shortenJSON)
+	r.Post("/api/shorten/batch", h.batch)
 	r.Get("/{id}", h.redirect)
 	r.Get("/ping", h.ping)
 
 	return r
+}
+
+type batchReq struct {
+	CorelationId string `json:"corelation_id"`
+	OriginalURL  string `json:"original_url"`
+}
+
+type batchRes struct {
+	CorelationId string `json:"corelation_id"`
+	ShortURL     string `json:"short_url"`
+}
+
+func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+	maxBytes := int64(1024)
+	body, err := io.ReadAll(http.MaxBytesReader(res, req.Body, maxBytes))
+	if err != nil {
+		http.Error(res, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var reqData []batchReq
+	if err := json.Unmarshal([]byte(body), &reqData); err != nil {
+		http.Error(res, "Error parsing JSON", http.StatusBadRequest)
+		return
+	}
+
+	var resData []batchRes
+	for _, v := range reqData {
+		parsedURL, err := url.Parse(v.OriginalURL)
+		if err != nil || parsedURL.Host == "" {
+			http.Error(res, "Incorrect URL", http.StatusBadRequest)
+			return
+		}
+		shortURL, err := h.shortener.Shorten(req.Context(), v.OriginalURL)
+		if err != nil {
+			http.Error(res, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		resData = append(resData, batchRes{CorelationId: v.CorelationId, ShortURL: shortURL})
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusCreated)
+	resJSON, err := json.Marshal(resData)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if _, err := res.Write(resJSON); err != nil {
+		http.Error(res, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 type shortenJSONReq struct {

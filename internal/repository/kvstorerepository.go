@@ -9,6 +9,7 @@ import (
 
 type KVStoreRepository interface {
 	Set(ctx context.Context, key string, val string) error
+	SetBatch(ctx context.Context, kvs map[string]string) error
 	Get(ctx context.Context, key string) (string, error)
 }
 

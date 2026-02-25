@@ -35,3 +35,27 @@ func (s *kvStoreDB) Set(ctx context.Context, key string, val string) error {
 
 	return nil
 }
+
+func (s *kvStoreDB) SetBatch(ctx context.Context, kvs map[string]string) error {
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begining transaction: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO t_shortener (key, val) values ($1, $2)")
+	if err != nil {
+		return fmt.Errorf("prepating stmt: %w", err)
+	}
+
+	for k, v := range kvs {
+		_, err := stmt.ExecContext(ctx, k, v)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("prepating stmt: %w", err)
+		}
+	}
+	tx.Commit()
+
+	return nil
+}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,7 +11,7 @@ import (
 )
 
 type kvStoreWriter struct {
-	mu   sync.RWMutex
+	mu   sync.Mutex
 	file *os.File
 }
 
@@ -22,7 +23,7 @@ func NewKVStoreWriter(path string) (*kvStoreWriter, error) {
 		return nil, err
 	}
 	return &kvStoreWriter{
-		mu:   sync.RWMutex{},
+		mu:   sync.Mutex{},
 		file: f}, nil
 }
 
@@ -35,6 +36,27 @@ func (w *kvStoreWriter) Put(e *kvEntry) error {
 	defer w.mu.Unlock()
 	_, err = w.file.Write(append(data, '\n'))
 	if err != nil {
+		return err
+	}
+
+	return w.file.Sync()
+}
+
+func (w *kvStoreWriter) PutBatch(es []*kvEntry) error {
+	var batch bytes.Buffer
+	for _, e := range es {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		batch.Write(data)
+		batch.WriteByte('\n')
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.file.Write(batch.Bytes()); err != nil {
 		return err
 	}
 

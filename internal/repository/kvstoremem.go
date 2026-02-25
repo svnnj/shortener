@@ -34,3 +34,10 @@ func (s *kvStoreMem) Set(ctx context.Context, key string, val string) error {
 	s.store[key] = val
 	return nil
 }
+
+func (s *kvStoreMem) SetBatch(ctx context.Context, kvs map[string]string) error {
+	for k, v := range kvs {
+		s.Set(ctx, k, v)
+	}
+	return nil
+}
