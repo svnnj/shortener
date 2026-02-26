@@ -47,13 +47,13 @@ func NewRouter(shortener service.ShortenerService, healthChecker service.HealthC
 }
 
 type batchReq struct {
-	CorelationID string `json:"corelation_id"`
-	OriginalURL  string `json:"original_url"`
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
 }
 
 type batchRes struct {
-	CorelationID string `json:"corelation_id"`
-	ShortURL     string `json:"short_url"`
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
 }
 
 func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
@@ -83,7 +83,7 @@ func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
 			http.Error(res, "Internal error", http.StatusInternalServerError)
 			return
 		}
-		resData = append(resData, batchRes{CorelationID: v.CorelationID, ShortURL: shortURL})
+		resData = append(resData, batchRes{CorrelationID: v.CorrelationID, ShortURL: shortURL})
 	}
 	if len(reqData) == 0 {
 		http.Error(res, "Empty array", http.StatusBadRequest)
