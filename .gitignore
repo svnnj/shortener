@@ -4,7 +4,6 @@
 *.dll
 *.so
 *.dylib
-kv.txt
 
 # Test binary, built with `go test -c`
 *.test
@@ -22,3 +21,7 @@ vendor/
 # IDEs directories
 .idea
 .vscode
+shortener
+shortenertestbeta-darwin-arm64
+.github/workflows/tst
+kv.txt

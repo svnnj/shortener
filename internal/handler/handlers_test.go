@@ -1,259 +1,458 @@
 package handler
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+	"github.com/svnnj/shortener/internal/model"
 	"github.com/svnnj/shortener/internal/service"
 )
 
-type shortenerMock struct {
-	shortenRet string
-	shortenErr error
+type MockShortenerService struct{ mock.Mock }
 
-	expandRet string
-	expandErr error
+func (m *MockShortenerService) Shorten(ctx context.Context, url string) (string, error) {
+	args := m.Called(ctx, url)
+	return args.String(0), args.Error(1)
+}
+func (m *MockShortenerService) ShortenBatch(ctx context.Context, req []model.ShortenBatchReq) ([]model.ShortenBatchRes, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).([]model.ShortenBatchRes), args.Error(1)
+}
+func (m *MockShortenerService) Expand(ctx context.Context, token string) (string, error) {
+	args := m.Called(ctx, token)
+	return args.String(0), args.Error(1)
 }
 
-func (s *shortenerMock) Shorten(originalURL string) (string, error) {
-	return s.shortenRet, s.shortenErr
+type MockHealthCheckerService struct{ mock.Mock }
+
+func (m *MockHealthCheckerService) Ping(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
 }
 
-func (s *shortenerMock) Expand(token string) (string, error) {
-	return s.expandRet, s.expandErr
+type HandlersSuite struct {
+	suite.Suite
+	shortenerMock *MockShortenerService
+	healthMock    *MockHealthCheckerService
+	router        http.Handler
 }
 
-func TestShorten_shorten(t *testing.T) {
+func (s *HandlersSuite) SetupTest() {
+	s.shortenerMock = new(MockShortenerService)
+	s.healthMock = new(MockHealthCheckerService)
+	s.router = NewRouter(s.shortenerMock, s.healthMock)
+}
+
+func (s *HandlersSuite) request(method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+	return rr
+}
+
+func (s *HandlersSuite) assertStatus(rr *httptest.ResponseRecorder, expected int) {
+	s.Equal(expected, rr.Code, "wrong HTTP status")
+}
+func (s *HandlersSuite) assertBody(rr *httptest.ResponseRecorder, expected string) {
+	s.Equal(expected, strings.TrimSpace(rr.Body.String()), "wrong body")
+
+}
+func (s *HandlersSuite) assertHeader(rr *httptest.ResponseRecorder, header, expected string) {
+	s.Equal(expected, strings.TrimSpace(rr.Header().Get(header)), "wrong header")
+}
+func (s *HandlersSuite) resetMocks() {
+	s.shortenerMock.ExpectedCalls = nil
+	s.shortenerMock.Calls = nil
+	s.healthMock.ExpectedCalls = nil
+	s.healthMock.Calls = nil
+}
+
+func (s *HandlersSuite) TestShortenHandler() {
 	tests := []struct {
-		name       string
-		method     string
-		body       string // raw request body
-		mock       shortenerMock
-		wantStatus int
-		wantCT     string
-		wantBody   string
+		name            string
+		method          string
+		body            string
+		headers         map[string]string
+		mockReturn      string
+		mockError       error
+		expectedStatus  int
+		expectedBody    string
+		expectedHeaders map[string]string
 	}{
 		{
-			name:   "successful POST",
-			method: http.MethodPost,
-			body:   "https://example.com/foo",
-			mock: shortenerMock{
-				shortenRet: "http://test.test/abc123",
-			},
-			wantStatus: http.StatusCreated,
-			wantCT:     "text/plain",
-			wantBody:   "http://test.test/abc123",
+			name:            "success",
+			method:          "POST",
+			body:            "https://example.com",
+			headers:         nil,
+			mockReturn:      "http://short.com/abc123",
+			mockError:       nil,
+			expectedStatus:  http.StatusCreated,
+			expectedBody:    "http://short.com/abc123",
+			expectedHeaders: map[string]string{"Content-Type": "text/plain"},
 		},
 		{
-			name:       "reject non‑POST",
-			method:     http.MethodGet,
-			body:       "",
-			mock:       shortenerMock{},
-			wantStatus: http.StatusMethodNotAllowed,
-			wantCT:     "",
-			wantBody:   "",
+			name:            "invalid url",
+			method:          "POST",
+			body:            "not a url",
+			headers:         nil,
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusBadRequest,
+			expectedBody:    "Incorrect URL",
+			expectedHeaders: nil,
 		},
 		{
-			name:       "invalid URL",
-			method:     http.MethodPost,
-			body:       "not-a-url",
-			mock:       shortenerMock{},
-			wantStatus: http.StatusBadRequest,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Incorrect URL\n",
+			name:            "service error",
+			method:          "POST",
+			body:            "https://example.com",
+			headers:         nil,
+			mockReturn:      "",
+			mockError:       errors.New("boom"),
+			expectedStatus:  http.StatusInternalServerError,
+			expectedBody:    "Internal error",
+			expectedHeaders: nil,
 		},
 		{
-			name:   "service error",
-			method: http.MethodPost,
-			body:   "https://example.com",
-			mock: shortenerMock{
-				shortenErr: errors.New("boom"),
-			},
-			wantStatus: http.StatusInternalServerError,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Internal error\n",
+			name:            "body too long",
+			method:          "POST",
+			body:            "https://example.com" + strings.Repeat("a", 1024),
+			headers:         nil,
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusBadRequest,
+			expectedBody:    "Invalid request body",
+			expectedHeaders: nil,
 		},
 		{
-			name:       "exceeds the limit",
-			method:     http.MethodPost,
-			body:       func() string { return "https://example.com/foo" + strings.Repeat("a", 2*1024) }(),
-			mock:       shortenerMock{},
-			wantStatus: http.StatusBadRequest,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Invalid request body\n",
+			name:            "method not allowed",
+			method:          "PUT",
+			body:            "",
+			headers:         nil,
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusMethodNotAllowed,
+			expectedBody:    "",
+			expectedHeaders: nil,
 		},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
-
-			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
-			rr := httptest.NewRecorder()
-			router.ServeHTTP(rr, req)
-
-			res := rr.Result()
-			defer res.Body.Close()
-			b, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.wantStatus, res.StatusCode)
-			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
-			assert.Equal(t, tt.wantBody, string(b))
+		s.Run(tt.name, func() {
+			s.resetMocks()
+			if tt.mockReturn != "" || tt.mockError != nil {
+				s.shortenerMock.On("Shorten", mock.Anything, tt.body).Return(tt.mockReturn, tt.mockError)
+			}
+			rr := s.request(tt.method, "/", []byte(tt.body), tt.headers)
+			s.assertStatus(rr, tt.expectedStatus)
+			if tt.expectedBody != "" {
+				s.assertBody(rr, tt.expectedBody)
+			}
+			for k, v := range tt.expectedHeaders {
+				s.assertHeader(rr, k, v)
+			}
+			s.shortenerMock.AssertExpectations(s.T())
 		})
 	}
 }
 
-func TestShorten_shortenJSON(t *testing.T) {
+func (s *HandlersSuite) TestExpandHandler() {
 	tests := []struct {
-		name       string
-		method     string
-		body       string // raw request body
-		mock       shortenerMock
-		wantStatus int
-		wantCT     string
-		wantBody   string
+		name            string
+		token           string
+		mockReturn      string
+		mockError       error
+		expectedStatus  int
+		expectedHeaders map[string]string
+		expectedBody    string
 	}{
 		{
-			name:   "successful POST",
-			method: http.MethodPost,
-			body:   `{"url":"https://example.com/foo"}`,
-			mock: shortenerMock{
-				shortenRet: "http://test.test/abc123",
-			},
-			wantStatus: http.StatusCreated,
-			wantCT:     "application/json",
-			wantBody:   `{"result":"http://test.test/abc123"}`,
+			name:            "success",
+			token:           "abc123",
+			mockReturn:      "https://example.com",
+			mockError:       nil,
+			expectedStatus:  http.StatusTemporaryRedirect,
+			expectedHeaders: map[string]string{"Location": "https://example.com", "Content-Type": "text/plain"},
+			expectedBody:    "",
 		},
 		{
-			name:       "reject non‑POST",
-			method:     http.MethodGet,
-			body:       "",
-			mock:       shortenerMock{},
-			wantStatus: http.StatusMethodNotAllowed,
-			wantCT:     "",
-			wantBody:   "",
+			name:            "not found",
+			token:           "abc123",
+			mockReturn:      "",
+			mockError:       service.ErrTokenNotFound,
+			expectedStatus:  http.StatusNotFound,
+			expectedHeaders: nil,
+			expectedBody:    "",
 		},
 		{
-			name:       "invalid URL",
-			method:     http.MethodPost,
-			body:       `{"url":"not-a-url"}`,
-			mock:       shortenerMock{},
-			wantStatus: http.StatusBadRequest,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Incorrect URL\n",
-		},
-		{
-			name:   "service error",
-			method: http.MethodPost,
-			body:   `{"url":"https://example.com"}`,
-			mock: shortenerMock{
-				shortenErr: errors.New("boom"),
-			},
-			wantStatus: http.StatusInternalServerError,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Internal error\n",
-		},
-		{
-			name:       "exceeds the limit",
-			method:     http.MethodPost,
-			body:       func() string { return `"url":"https://example.com/foo"` + strings.Repeat("a", 2*1024) }(),
-			mock:       shortenerMock{},
-			wantStatus: http.StatusBadRequest,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "Invalid request body\n",
+			name:            "internal error",
+			token:           "abc123",
+			mockReturn:      "",
+			mockError:       errors.New("boom"),
+			expectedStatus:  http.StatusInternalServerError,
+			expectedHeaders: nil,
+			expectedBody:    "",
 		},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
-
-			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
-			req.Header.Add("Content-Type", "application/json")
-			rr := httptest.NewRecorder()
-			router.ServeHTTP(rr, req)
-
-			res := rr.Result()
-			defer res.Body.Close()
-			b, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.wantStatus, res.StatusCode)
-			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
-			assert.Equal(t, tt.wantBody, string(b))
+		s.Run(tt.name, func() {
+			s.resetMocks()
+			s.shortenerMock.On("Expand", mock.Anything, tt.token).Return(tt.mockReturn, tt.mockError)
+			rr := s.request("GET", "/"+tt.token, nil, nil)
+			s.assertStatus(rr, tt.expectedStatus)
+			for k, v := range tt.expectedHeaders {
+				s.assertHeader(rr, k, v)
+			}
+			if tt.expectedBody != "" {
+				s.assertBody(rr, tt.expectedBody)
+			}
+			s.shortenerMock.AssertExpectations(s.T())
 		})
 	}
 }
 
-func TestShorten_redirect(t *testing.T) {
+func (s *HandlersSuite) TestPingHandler() {
 	tests := []struct {
-		name         string
-		method       string
-		path         string
-		mock         shortenerMock
-		wantStatus   int
-		wantCT       string
-		wantLocation string
-		wantBody     string
+		name            string
+		mockError       error
+		expectedStatus  int
+		expectedBody    string
+		expectedHeaders map[string]string
 	}{
 		{
-			name:   "succesful GET",
-			method: http.MethodGet,
-			path:   "/abc123",
-			mock: shortenerMock{
-				expandRet: "https://example.com/original",
-			},
-			wantStatus:   http.StatusTemporaryRedirect,
-			wantCT:       "text/plain",
-			wantLocation: "https://example.com/original",
-			wantBody:     "",
+			name:            "success",
+			mockError:       nil,
+			expectedStatus:  http.StatusOK,
+			expectedBody:    "",
+			expectedHeaders: nil,
 		},
 		{
-			name:       "reject non‑GET",
-			method:     http.MethodPost,
-			path:       "/abc123",
-			mock:       shortenerMock{},
-			wantStatus: http.StatusMethodNotAllowed,
-			wantCT:     "",
-			wantBody:   "",
+			name:            "db not available",
+			mockError:       service.ErrNilConnection,
+			expectedStatus:  http.StatusInternalServerError,
+			expectedBody:    "Database is not available",
+			expectedHeaders: nil,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.resetMocks()
+			s.healthMock.On("Ping", mock.Anything).Return(tt.mockError)
+
+			rr := s.request("GET", "/ping", nil, nil)
+			s.assertStatus(rr, tt.expectedStatus)
+			if tt.expectedBody != "" {
+				s.assertBody(rr, tt.expectedBody)
+			}
+			for k, v := range tt.expectedHeaders {
+				s.assertHeader(rr, k, v)
+			}
+			s.healthMock.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *HandlersSuite) TestShortenJSONHandler() {
+	tests := []struct {
+		name            string
+		method          string
+		body            string
+		headers         map[string]string
+		mockURL         string
+		mockReturn      string
+		mockError       error
+		expectedStatus  int
+		expectedBody    string
+		expectedHeaders map[string]string
+	}{
+		{
+			name:            "success",
+			method:          "POST",
+			body:            `{"url":"https://example.com"}`,
+			headers:         nil,
+			mockURL:         "https://example.com",
+			mockReturn:      "http://short.com/abc123",
+			mockError:       nil,
+			expectedStatus:  http.StatusCreated,
+			expectedBody:    `{"result":"http://short.com/abc123"}`,
+			expectedHeaders: map[string]string{"Content-Type": "application/json"},
 		},
 		{
-			name:   "token not found",
-			method: http.MethodGet,
-			path:   "/missing",
-			mock: shortenerMock{
-				expandErr: service.ErrTokenNotFound,
+			name:            "invalid url",
+			method:          "POST",
+			body:            `{"url":"not a url"}`,
+			headers:         nil,
+			mockURL:         "not a url",
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusBadRequest,
+			expectedBody:    "Incorrect URL",
+			expectedHeaders: nil,
+		},
+		{
+			name:            "service error",
+			method:          "POST",
+			body:            `{"url":"https://example.com"}`,
+			headers:         nil,
+			mockURL:         "https://example.com",
+			mockReturn:      "",
+			mockError:       errors.New("boom"),
+			expectedStatus:  http.StatusInternalServerError,
+			expectedBody:    "Internal error",
+			expectedHeaders: nil,
+		},
+		{
+			name:            "body too long",
+			method:          "POST",
+			body:            `{"url":"https://example.com` + strings.Repeat("a", 1024) + `"}`,
+			headers:         nil,
+			mockURL:         "",
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusBadRequest,
+			expectedBody:    "Invalid request body",
+			expectedHeaders: nil,
+		},
+		{
+			name:            "method not allowed",
+			method:          "PUT",
+			body:            `{"url":"https://example.com"}`,
+			headers:         nil,
+			mockURL:         "",
+			mockReturn:      "",
+			mockError:       nil,
+			expectedStatus:  http.StatusMethodNotAllowed,
+			expectedBody:    "",
+			expectedHeaders: nil,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.resetMocks()
+			if tt.mockReturn != "" || tt.mockError != nil {
+				s.shortenerMock.On("Shorten", mock.Anything, tt.mockURL).Return(tt.mockReturn, tt.mockError)
+			}
+			rr := s.request(tt.method, "/api/shorten", []byte(tt.body), tt.headers)
+			s.assertStatus(rr, tt.expectedStatus)
+			if tt.expectedBody != "" {
+				s.assertBody(rr, tt.expectedBody)
+			}
+			for k, v := range tt.expectedHeaders {
+				s.assertHeader(rr, k, v)
+			}
+			s.shortenerMock.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *HandlersSuite) TestShortenBatchHandler() {
+	type testCase struct {
+		name           string
+		method         string
+		body           interface{}
+		mockReq        []model.ShortenBatchReq
+		mockRes        []model.ShortenBatchRes
+		mockError      error
+		expectedStatus int
+		expectedBody   string
+	}
+	successReq := []model.ShortenBatchReq{
+		{CorrelationID: "1", OriginalURL: "https://example1.com"},
+		{CorrelationID: "A", OriginalURL: "https://exampleA.com"},
+	}
+	successRes := []model.ShortenBatchRes{
+		{CorrelationID: "1", ShortURL: "http://short1.com/abc123"},
+		{CorrelationID: "A", ShortURL: "http://shortA.com/abc123"},
+	}
+	successBody, _ := json.Marshal(successReq)
+	successResp, _ := json.Marshal(successRes)
+
+	tests := []testCase{
+		{
+			name:           "success",
+			method:         "POST",
+			body:           successBody,
+			mockReq:        successReq,
+			mockRes:        successRes,
+			expectedStatus: http.StatusCreated,
+			expectedBody:   string(successResp),
+		},
+		{
+			name:   "invalid url",
+			method: "POST",
+			body: []model.ShortenBatchReq{
+				{CorrelationID: "1", OriginalURL: "https://example1.com"},
+				{CorrelationID: "A", OriginalURL: "not a url"},
 			},
-			wantStatus: http.StatusNotFound,
-			wantCT:     "text/plain; charset=utf-8",
-			wantBody:   "No such URL\n",
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Incorrect URL: not a url",
+		},
+		{
+			name:           "service error",
+			method:         "POST",
+			body:           successBody,
+			mockReq:        successReq,
+			mockRes:        []model.ShortenBatchRes{},
+			mockError:      errors.New("boom"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:   "body too long",
+			method: "POST",
+			body: []model.ShortenBatchReq{
+				{CorrelationID: "1", OriginalURL: "https://example1.com" + strings.Repeat("a", 1024)},
+				{CorrelationID: "A", OriginalURL: "https://exampleA.com"},
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "empty array",
+			method:         "POST",
+			body:           []model.ShortenBatchReq{},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Empty array",
+		},
+		{
+			name:           "method not allowed",
+			method:         "PUT",
+			body:           []model.ShortenBatchReq{},
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(&tt.mock)
-
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			rr := httptest.NewRecorder()
-			router.ServeHTTP(rr, req)
-
-			res := rr.Result()
-			defer res.Body.Close()
-			b, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.wantStatus, res.StatusCode)
-			assert.Equal(t, tt.wantCT, res.Header.Get("Content-Type"))
-			assert.Equal(t, tt.wantLocation, res.Header.Get("Location"))
-			assert.Equal(t, tt.wantBody, string(b))
+		s.Run(tt.name, func() {
+			s.resetMocks()
+			var reqBody []byte
+			switch v := tt.body.(type) {
+			case []byte:
+				reqBody = v
+			default:
+				reqBody, _ = json.Marshal(v)
+			}
+			if tt.mockReq != nil {
+				s.shortenerMock.On("ShortenBatch", mock.Anything, tt.mockReq).Return(tt.mockRes, tt.mockError)
+			}
+			rr := s.request(tt.method, "/api/shorten/batch", reqBody, nil)
+			s.assertStatus(rr, tt.expectedStatus)
+			if tt.expectedBody != "" {
+				s.assertBody(rr, tt.expectedBody)
+			}
+			s.shortenerMock.AssertExpectations(s.T())
 		})
 	}
+}
+
+func TestHandlersSuite(t *testing.T) {
+	suite.Run(t, new(HandlersSuite))
 }
