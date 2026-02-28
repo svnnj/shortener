@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("no such entity")
+	ErrNotFound     = errors.New("no such entity")
+	ErrIncorrectKey = errors.New("empty/incorrect key")
 )
 
 type URLStoreRepository interface {

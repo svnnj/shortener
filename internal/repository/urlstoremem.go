@@ -29,6 +29,9 @@ func (s *urlStoreMem) Get(ctx context.Context, token string) (string, error) {
 }
 
 func (s *urlStoreMem) Set(ctx context.Context, rec URLRec) error {
+	if rec.Token == "" {
+		return fmt.Errorf("setting token (%s): %w", rec.Token, ErrIncorrectKey)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store[rec.Token] = rec.OriginalURL
