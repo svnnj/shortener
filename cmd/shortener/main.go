@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,18 +17,15 @@ import (
 func run(ctx context.Context) error {
 	cfg := config.Get()
 
-	var sqlDB *sql.DB
-	var err error
-
-	if cfg.DatabaseDSN != "" {
-		sqlDB, err = db.NewPostgresDB(cfg.DatabaseDSN)
-		if err != nil {
-			return fmt.Errorf("db init: %w", err)
-		}
-		defer sqlDB.Close()
+	db, err := db.NewPostgresDB(cfg.DatabaseDSN)
+	if err != nil {
+		slog.Error("db init: " + err.Error())
+	}
+	if db != nil {
+		defer db.Close()
 	}
 
-	urlStore, err := repository.NewKVStore(cfg, sqlDB)
+	urlStore, err := repository.NewURLStore(cfg, db)
 	if err != nil {
 		return fmt.Errorf("store init: %w", err)
 	}
@@ -37,10 +33,10 @@ func run(ctx context.Context) error {
 	tokenGen := service.NewB64TokenGen(9)
 	shortener := service.NewShortener(urlStore, tokenGen, cfg)
 
-	healthChecker := service.NewHealthChecker(sqlDB)
+	healthChecker := service.NewHealthChecker(db)
 	handler := handler.NewRouter(shortener, healthChecker)
 
-	slog.Info("starting the server...")
+	slog.Info(fmt.Sprintf(`starting the server on %s`, cfg.ServerAddress))
 	return http.ListenAndServe(cfg.ServerAddress, handler)
 }
 

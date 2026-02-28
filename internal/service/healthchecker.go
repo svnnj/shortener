@@ -3,15 +3,22 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 )
 
-type HealthCheckerService interface {
-	PingDB(ctx context.Context) error
-}
+var (
+	ErrNilConnection = errors.New("database connection is nil")
+)
 
-type HealthChecker struct {
-	db *sql.DB
-}
+type (
+	HealthCheckerService interface {
+		Ping(ctx context.Context) error
+	}
+	HealthChecker struct {
+		db *sql.DB
+	}
+)
 
 func NewHealthChecker(db *sql.DB) *HealthChecker {
 	return &HealthChecker{
@@ -19,6 +26,11 @@ func NewHealthChecker(db *sql.DB) *HealthChecker {
 	}
 }
 
-func (hc *HealthChecker) PingDB(ctx context.Context) error {
+func (hc *HealthChecker) Ping(ctx context.Context) error {
+	if hc.db == nil {
+		return ErrNilConnection
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	return hc.db.PingContext(ctx)
 }

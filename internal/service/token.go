@@ -5,13 +5,15 @@ import (
 	"encoding/base64"
 )
 
-type TokenService interface {
-	Generate() string
-}
+type (
+	TokenService interface {
+		Generate() string
+	}
 
-type b64TokenGen struct {
-	randLen int
-}
+	b64TokenGen struct {
+		randLen int
+	}
+)
 
 func NewB64TokenGen(randLen int) *b64TokenGen {
 	return &b64TokenGen{

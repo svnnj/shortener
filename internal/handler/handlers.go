@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
+	"github.com/svnnj/shortener/internal/model"
 	"github.com/svnnj/shortener/internal/service"
 )
 
@@ -34,59 +36,53 @@ func NewRouter(shortener service.ShortenerService, healthChecker service.HealthC
 
 	r.Use(withLogging)
 	r.Use(withDecompression)
-	r.Use(withGzip)
+	r.Use(withCompression)
 	r.Use(middleware.Recoverer)
 
 	r.Post("/", h.shorten)
 	r.Post("/api/shorten", h.shortenJSON)
-	r.Post("/api/shorten/batch", h.batch)
+	r.Post("/api/shorten/batch", h.shortenBatch)
 	r.Get("/{id}", h.redirect)
 	r.Get("/ping", h.ping)
 
 	return r
 }
 
-type batchReq struct {
-	CorrelationID string `json:"correlation_id"`
-	OriginalURL   string `json:"original_url"`
-}
-
-type batchRes struct {
-	CorrelationID string `json:"correlation_id"`
-	ShortURL      string `json:"short_url"`
-}
-
-func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
+func (h *handlers) shortenBatch(res http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 	maxBytes := int64(1024)
 	body, err := io.ReadAll(http.MaxBytesReader(res, req.Body, maxBytes))
 	if err != nil {
+		slog.Warn("failed to read request body", "error", err, "max_bytes", maxBytes)
 		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	var reqData []batchReq
+	var reqData []model.ShortenBatchReq
 	if err := json.Unmarshal([]byte(body), &reqData); err != nil {
+		slog.Warn("failed to parse JSON", "error", err, "body", string(body))
 		http.Error(res, "Error parsing JSON", http.StatusBadRequest)
 		return
 	}
+	if len(reqData) == 0 {
+		slog.Warn("empty batch request received")
+		http.Error(res, "Empty array", http.StatusBadRequest)
+		return
+	}
 
-	var resData []batchRes
 	for _, v := range reqData {
 		parsedURL, err := url.Parse(v.OriginalURL)
 		if err != nil || parsedURL.Host == "" {
-			http.Error(res, "Incorrect URL", http.StatusBadRequest)
+			slog.Warn("invalid URL in batch", "url", v.OriginalURL, "error", err)
+			http.Error(res, fmt.Sprintf("Incorrect URL: %s", v.OriginalURL), http.StatusBadRequest)
 			return
 		}
-		shortURL, err := h.shortener.Shorten(req.Context(), v.OriginalURL)
-		if err != nil {
-			http.Error(res, "Internal error", http.StatusInternalServerError)
-			return
-		}
-		resData = append(resData, batchRes{CorrelationID: v.CorrelationID, ShortURL: shortURL})
 	}
-	if len(reqData) == 0 {
-		http.Error(res, "Empty array", http.StatusBadRequest)
+
+	resData, err := h.shortener.ShortenBatch(req.Context(), reqData)
+	if err != nil {
+		slog.Error("failed to shorten batch", "error", err, "batch_size", len(reqData))
+		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -95,22 +91,16 @@ func (h *handlers) batch(res http.ResponseWriter, req *http.Request) {
 	var resJSON []byte
 	resJSON, err = json.Marshal(resData)
 	if err != nil {
+		slog.Error("failed to marshal response", "error", err, "response_data", resData)
 		http.Error(res, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if _, err := res.Write(resJSON); err != nil {
+		slog.Error("failed to write response", "error", err)
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
 	}
-}
-
-type shortenJSONReq struct {
-	URL string `json:"url"`
-}
-
-type shortenJSONRes struct {
-	Result string `json:"result"`
 }
 
 func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
@@ -118,24 +108,28 @@ func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
 	maxBytes := int64(1024)
 	body, err := io.ReadAll(http.MaxBytesReader(res, req.Body, maxBytes))
 	if err != nil {
+		slog.Warn("failed to read request body", "error", err, "max_bytes", maxBytes)
 		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	var reqData shortenJSONReq
+	var reqData model.ShortenJSONReq
 	if err := json.Unmarshal([]byte(body), &reqData); err != nil {
+		slog.Warn("failed to parse JSON", "error", err, "body", string(body))
 		http.Error(res, "Error parsing JSON", http.StatusBadRequest)
 		return
 	}
 	parsedURL, err := url.Parse(reqData.URL)
 	if err != nil || parsedURL.Host == "" {
+		slog.Warn("invalid URL provided", "url", reqData.URL, "error", err)
 		http.Error(res, "Incorrect URL", http.StatusBadRequest)
 		return
 	}
 
-	var resData shortenJSONRes
+	var resData model.ShortenJSONRes
 	shortURL, err := h.shortener.Shorten(req.Context(), reqData.URL)
 	if err != nil {
+		slog.Error("failed to shorten URL", "error", err, "original_url", reqData.URL)
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -145,11 +139,13 @@ func (h *handlers) shortenJSON(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(http.StatusCreated)
 	resJSON, err := json.Marshal(resData)
 	if err != nil {
+		slog.Error("failed to marshal response", "error", err, "response_data", resData)
 		http.Error(res, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if _, err := res.Write(resJSON); err != nil {
+		slog.Error("failed to write response", "error", err)
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -161,18 +157,21 @@ func (h *handlers) shorten(res http.ResponseWriter, req *http.Request) {
 	maxBytes := int64(1024)
 	body, err := io.ReadAll(http.MaxBytesReader(res, req.Body, maxBytes))
 	if err != nil {
+		slog.Warn("failed to read request body", "error", err, "max_bytes", maxBytes)
 		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	originalURL, err := url.Parse(string(body))
 	if err != nil || originalURL.Host == "" {
+		slog.Warn("invalid URL provided", "url", string(body), "error", err)
 		http.Error(res, "Incorrect URL", http.StatusBadRequest)
 		return
 	}
 
 	shortURL, err := h.shortener.Shorten(req.Context(), originalURL.String())
 	if err != nil {
+		slog.Error("failed to shorten URL", "error", err, "original_url", originalURL.String())
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -180,6 +179,7 @@ func (h *handlers) shorten(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "text/plain")
 	res.WriteHeader(http.StatusCreated)
 	if _, err := io.WriteString(res, shortURL); err != nil {
+		slog.Error("failed to write response", "error", err)
 		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -193,10 +193,16 @@ func (h *handlers) redirect(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(req, "id")
-	originalURL, err := h.shortener.Expand(req.Context(), id)
+	token := chi.URLParam(req, "id")
+	originalURL, err := h.shortener.Expand(req.Context(), token)
 	if errors.Is(err, service.ErrTokenNotFound) {
+		slog.Info("token not found", "token", token)
 		http.Error(res, "No such URL", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("failed to expand token", "error", err, "token", token)
+		http.Error(res, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -209,13 +215,19 @@ func (h *handlers) ping(res http.ResponseWriter, req *http.Request) {
 
 	defer req.Body.Close()
 	if _, err := io.Copy(io.Discard, io.LimitReader(req.Body, 1024)); err != nil {
+		slog.Warn("failed to discard request body", "error", err)
 		http.Error(res, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	err := h.healthChecker.PingDB(req.Context())
+	err := h.healthChecker.Ping(req.Context())
 	if err != nil {
-		http.Error(res, "Database is not available", http.StatusInternalServerError)
+		if errors.Is(err, service.ErrNilConnection) {
+			http.Error(res, "Database is not available", http.StatusInternalServerError)
+			return
+		}
+		slog.Error("health check failed", "error", err)
+		http.Error(res, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -276,12 +288,9 @@ func withLogging(h http.Handler) http.Handler {
 func withDecompression(next http.Handler) http.Handler {
 	compFn := func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
-			slog.Info("not gzipped request")
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		slog.Info("gzipped request")
 
 		defer r.Body.Close()
 		gzr, err := gzip.NewReader(r.Body)
@@ -306,7 +315,7 @@ func (w gzipWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-func withGzip(next http.Handler) http.Handler {
+func withCompression(next http.Handler) http.Handler {
 	compFn := func(w http.ResponseWriter, r *http.Request) {
 		isToBeCompressed := false
 		for _, s := range r.Header.Values("Accept-Encoding") {
@@ -317,14 +326,11 @@ func withGzip(next http.Handler) http.Handler {
 		}
 		if strings.Contains(w.Header().Get("Content-Type"), "application/json") && strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
 			isToBeCompressed = false
-			slog.Info("gzipped response")
 		}
 		if !isToBeCompressed {
-			slog.Info("not gzipped response")
 			next.ServeHTTP(w, r)
 			return
 		}
-		slog.Info("gzipped response")
 
 		gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
 		if err != nil {
