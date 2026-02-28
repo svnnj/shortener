@@ -66,9 +66,10 @@ func (s *HandlersSuite) assertStatus(rr *httptest.ResponseRecorder, expected int
 }
 func (s *HandlersSuite) assertBody(rr *httptest.ResponseRecorder, expected string) {
 	s.Equal(expected, strings.TrimSpace(rr.Body.String()), "wrong body")
+
 }
 func (s *HandlersSuite) assertHeader(rr *httptest.ResponseRecorder, header, expected string) {
-	s.Equal(expected, strings.TrimSpace(rr.Result().Header.Get(header)), "wrong header")
+	s.Equal(expected, strings.TrimSpace(rr.Header().Get(header)), "wrong header")
 }
 func (s *HandlersSuite) resetMocks() {
 	s.shortenerMock.ExpectedCalls = nil
